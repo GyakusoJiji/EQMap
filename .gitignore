@@ -1,0 +1,14 @@
+# make_map_data.py が落としてくる元データ（13MB）。必要なら再取得される。
+tools/_ne_*.geojson
+
+# SQLite の DB と WAL。サーバー上の /var/lib/eqmap にあるものが正。
+*.db
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.pyc
+
+# Claude Code のローカル設定（この PC 固有）
+.claude/settings.local.json

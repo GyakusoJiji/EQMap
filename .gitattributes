@@ -1,0 +1,4 @@
+# このプロジェクトは Windows から Linux サーバーへ配布する。
+# CRLF になると install.sh と systemd ユニットが動かなくなるため、
+# チェックアウト時も必ず LF にする。
+* text=auto eol=lf

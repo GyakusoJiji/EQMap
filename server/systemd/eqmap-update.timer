@@ -1,0 +1,16 @@
+[Unit]
+Description=EQMap: 毎日1回 気象庁から取得して DB を更新する
+
+[Timer]
+# サーバーのローカルタイムで毎日 04:10。気象庁側への集中を避けるため最大10分ずらす。
+OnCalendar=*-*-* 04:10:00
+RandomizedDelaySec=600
+
+# サーバーが止まっていて実行を逃した場合、起動後に取り返す。
+# 気象庁の一覧は直近30日分あるので、数日止まっていても取りこぼさない。
+Persistent=true
+
+Unit=eqmap-update.service
+
+[Install]
+WantedBy=timers.target

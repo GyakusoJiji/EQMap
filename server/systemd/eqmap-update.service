@@ -1,0 +1,18 @@
+[Unit]
+Description=EQMap: 気象庁の地震一覧を取得して DB を更新する
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=eqmap
+Group=eqmap
+WorkingDirectory=/opt/eqmap
+ExecStart=/usr/bin/python3 /opt/eqmap/eqmap.py --db /var/lib/eqmap/eqmap.db update
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/eqmap

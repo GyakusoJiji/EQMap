@@ -1,0 +1,27 @@
+[Unit]
+Description=EQMap server (API + web UI)
+Documentation=file:/opt/eqmap/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=eqmap
+Group=eqmap
+WorkingDirectory=/opt/eqmap
+ExecStart=/usr/bin/python3 /opt/eqmap/eqmap.py --db /var/lib/eqmap/eqmap.db serve --host 0.0.0.0 --port 8787 --web /opt/eqmap/web
+Restart=on-failure
+RestartSec=5
+
+# 最低限のサンドボックス。書けるのは DB のディレクトリだけ。
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/eqmap
+
+[Install]
+WantedBy=multi-user.target
