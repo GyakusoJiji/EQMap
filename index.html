@@ -247,6 +247,12 @@ const RIPPLE_SEC = 0.9;   // 波紋が広がりきるまで
 const GLOW_SEC   = 5.0;   // コアが余韻として減衰しきるまで
 const TRAIL_A    = 0.13;  // 残像の最終不透明度
 
+// 残像を残す期間。表示時刻からこれだけさかのぼった分だけを描き、それより古い震源は消す。
+// 全期間を残し続けると画面が埋まって直近の動きが読めなくなるため。
+const TRAIL_DAYS = 90;             // 3か月
+const TRAIL_SPAN = TRAIL_DAYS * DAY;
+const TRAIL_REBUILD_MS = 100;      // 焼き直しの実時間での最短間隔
+
 const TRAIL_FILL = '#ff8a52';
 const TRAIL_EDGE = 'rgba(255,190,150,.30)';
 
@@ -522,6 +528,7 @@ const app = {
   loop: true,
   minMag: 0,
   rangeDays: 0,
+  trailStart: 0,    // ここより手前は古すぎるので trail から外してある
   trailEnd: 0,      // ここより手前は trail に焼き付け済み
   cursor: 0,        // ここより手前は発生済み
   hover: null,
@@ -562,6 +569,16 @@ function rebuildVisible(keepTime){
   updateClock();
 }
 
+/** t 以上の最初の要素の添字。visible は時刻昇順なので二分探索できる。 */
+function lowerBound(v, t){
+  let lo = 0, hi = v.length;
+  while(lo < hi){
+    const mid = (lo + hi) >> 1;
+    if(v[mid][E_T] < t) lo = mid + 1; else hi = mid;
+  }
+  return lo;
+}
+
 /** 焼き付け済みレイヤを作り直す。投影・速度・フィルタが変わったら必ず呼ぶ。 */
 function rebuildTrail(){
   trailCtx.setTransform(1,0,0,1,0,0);
@@ -570,7 +587,9 @@ function rebuildTrail(){
 
   const cut = app.simTime - glowSpan();
   const v = app.visible;
-  let i = 0;
+  // 表示時刻から TRAIL_SPAN より古い震源は焼き付けない
+  let i = lowerBound(v, app.simTime - TRAIL_SPAN);
+  app.trailStart = i;
   while(i < v.length && v[i][E_T] <= cut){ stampTrail(v[i]); i++; }
   app.trailEnd = i;
   let c = i;
@@ -597,6 +616,7 @@ function stampTrail(e){
    7. 描画ループ
    =================================================================== */
 let lastFrame = 0;
+let lastTrailRebuild = 0;
 
 function frame(now){
   const dt = lastFrame ? Math.min(now - lastFrame, 250) : 0;
@@ -620,6 +640,19 @@ function frame(now){
 /** ポインタを進め、余韻が終わったイベントを trail へ移す。 */
 function advance(){
   const v = app.visible, n = v.length;
+
+  // 焼き付けた円は個別には消せないので、TRAIL_SPAN を過ぎたものが出たら焼き直す。
+  // 毎フレーム焼き直すと密な時期（2011年の余震など）で数千個の描き直しになるため、
+  // 実時間で間隔を空ける。最大 TRAIL_REBUILD_MS ぶん消え遅れるが目では追えない。
+  if(app.trailStart < app.trailEnd && v[app.trailStart][E_T] < app.simTime - TRAIL_SPAN){
+    const now = performance.now();
+    if(now - lastTrailRebuild >= TRAIL_REBUILD_MS){
+      lastTrailRebuild = now;
+      rebuildTrail();   // trailStart / trailEnd / cursor をまとめて張り直す
+      return;
+    }
+  }
+
   const cut = app.simTime - glowSpan();
   while(app.trailEnd < n && v[app.trailEnd][E_T] <= cut){ stampTrail(v[app.trailEnd]); app.trailEnd++; }
   while(app.cursor < n && v[app.cursor][E_T] <= app.simTime) app.cursor++;
@@ -757,7 +790,7 @@ function buildLegend(){
 function hitTest(mx, my){
   let best = null, bestD = Infinity;
   const v = app.visible;
-  for(let i = 0; i < app.cursor; i++){
+  for(let i = app.trailStart; i < app.cursor; i++){
     const e = v[i];
     const p = project(e[E_LON], e[E_LAT]);
     const d = Math.hypot(p[0]-mx, p[1]-my);
