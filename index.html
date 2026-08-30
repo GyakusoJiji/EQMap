@@ -89,6 +89,16 @@
   button.btn:disabled{opacity:.45;cursor:default}
   option{background:#111826;color:var(--ink)}
 
+  input.datebox{
+    background:rgba(255,255,255,.05);color:var(--ink);
+    border:1px solid var(--edge);border-radius:6px;
+    padding:3px 6px;font:inherit;font-size:11.5px;
+    width:6.2em;text-align:center;font-variant-numeric:tabular-nums;
+  }
+  input.datebox:hover{background:rgba(255,255,255,.11)}
+  input.datebox:focus{outline:none;border-color:var(--accent)}
+  input.datebox::placeholder{color:var(--ink-dim)}
+
   /* ---- 上部中央: 状態バナー ---- */
   #banner{
     left:50%;top:14px;transform:translateX(-50%);
@@ -162,13 +172,9 @@
       </select>
     </label>
     <label>期間
-      <select id="range">
-        <option value="7">直近7日</option>
-        <option value="30">直近30日</option>
-        <option value="90">直近90日</option>
-        <option value="365">直近365日</option>
-        <option value="0" selected>全期間</option>
-      </select>
+      <input id="range-from" class="datebox" type="text" inputmode="numeric" maxlength="6" placeholder="YYMMDD" title="再生範囲の開始日 (YYMMDD)">
+      〜
+      <input id="range-to" class="datebox" type="text" inputmode="numeric" maxlength="6" placeholder="YYMMDD" title="再生範囲の終了日 (YYMMDD)">
     </label>
     <label>規模
       <select id="minmag">
@@ -253,6 +259,10 @@ const TRAIL_DAYS = 90;             // 3か月
 const TRAIL_SPAN = TRAIL_DAYS * DAY;
 const TRAIL_REBUILD_MS = 100;      // 焼き直しの実時間での最短間隔
 
+// 再生範囲のデフォルト。ユーザーが期間欄を編集するまでは、蓄積データの最新日から
+// これだけさかのぼった範囲を再生対象とする。
+const RANGE_DEFAULT_DAYS = 90;     // 3か月
+
 const TRAIL_FILL = '#ff8a52';
 const TRAIL_EDGE = 'rgba(255,190,150,.30)';
 
@@ -269,6 +279,29 @@ function fmtJST(t, withTime){
   if(!isFinite(t)) return '—';
   const s = new Date(t + JST).toISOString();
   return withTime ? s.slice(0,10) + ' ' + s.slice(11,16) : s.slice(0,10);
+}
+
+/** t を含む日の JST 0:00 に切り下げる。 */
+function jstDayStart(t){
+  const s = new Date(t + JST).toISOString();
+  return Date.UTC(+s.slice(0,4), +s.slice(5,7) - 1, +s.slice(8,10)) - JST;
+}
+
+/** "YYMMDD" → その日の JST 0:00（UTC ms）。不正な入力は null。 */
+function parseYYMMDD(str){
+  const m = /^(\d{2})(\d{2})(\d{2})$/.exec(String(str || '').trim());
+  if(!m) return null;
+  const yy = +m[1], mm = +m[2], dd = +m[3];
+  if(mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  const t = Date.UTC(2000 + yy, mm - 1, dd) - JST;
+  if(new Date(t + JST).getUTCMonth() !== mm - 1) return null; // 2/30 等を弾く
+  return t;
+}
+
+/** JST の日付を "YYMMDD" に整形する。 */
+function fmtYYMMDD(t){
+  const s = new Date(t + JST).toISOString();
+  return s.slice(2,4) + s.slice(5,7) + s.slice(8,10);
 }
 
 /** 白熱色 → アクセント色のランプ。毎フレームの色補間を避けるため先に作る。 */
@@ -527,7 +560,9 @@ const app = {
   speed: 86400000,  // シミュレーション時間(ms) / 実時間1秒。30日ぶんを約30秒で流す
   loop: true,
   minMag: 0,
-  rangeDays: 0,
+  rangeFrom: 0,     // 再生範囲の開始（JST 0:00, UTC ms）。0 は下限なし
+  rangeTo: 0,       // 再生範囲の終了（排他的上限, UTC ms）。0 は上限なし
+  rangeUserSet: false, // 期間欄をユーザーが編集済みなら、デフォルト値で上書きしない
   trailStart: 0,    // ここより手前は古すぎるので trail から外してある
   trailEnd: 0,      // ここより手前は trail に焼き付け済み
   cursor: 0,        // ここより手前は発生済み
@@ -550,14 +585,23 @@ function inKeepBox(e){
       && e[E_LAT] >= KEEP_BBOX.latMin && e[E_LAT] <= KEEP_BBOX.latMax;
 }
 
+/** 期間欄が未編集なら、蓄積データの最新日から RANGE_DEFAULT_DAYS ぶんを既定の再生範囲にする。 */
+function applyDefaultRange(){
+  if(app.rangeUserSet || !app.all.length) return;
+  const latestDayStart = jstDayStart(app.all[app.all.length - 1][E_T]);
+  app.rangeFrom = latestDayStart - RANGE_DEFAULT_DAYS * DAY;
+  app.rangeTo = latestDayStart + DAY;
+  $('range-from').value = fmtYYMMDD(app.rangeFrom);
+  $('range-to').value = fmtYYMMDD(latestDayStart);
+}
+
 function rebuildVisible(keepTime){
+  applyDefaultRange();
   const prev = app.simTime;
   let list = app.all.filter(inKeepBox);
   if(app.minMag > 0) list = list.filter(e => e[E_MAG] != null && e[E_MAG] >= app.minMag);
-  if(app.rangeDays > 0){
-    const cut = Date.now() - app.rangeDays * DAY;
-    list = list.filter(e => e[E_T] >= cut);
-  }
+  if(app.rangeFrom) list = list.filter(e => e[E_T] >= app.rangeFrom);
+  if(app.rangeTo)   list = list.filter(e => e[E_T] < app.rangeTo);
   app.visible = list;
   app.tMin = list.length ? list[0][E_T] : Date.now() - 30*DAY;
   app.tMax = list.length ? list[list.length-1][E_T] : Date.now();
@@ -849,8 +893,19 @@ function wireInput(){
     rebuildTrail();   // 余韻の長さが変わるので焼き付け範囲も変わる
   });
 
-  $('range').addEventListener('change', (ev) => {
-    app.rangeDays = Number(ev.target.value);
+  $('range-from').addEventListener('change', (ev) => {
+    app.rangeUserSet = true;
+    const t = parseYYMMDD(ev.target.value);
+    app.rangeFrom = t || 0;
+    ev.target.value = t ? fmtYYMMDD(t) : '';
+    rebuildVisible(false);
+  });
+
+  $('range-to').addEventListener('change', (ev) => {
+    app.rangeUserSet = true;
+    const t = parseYYMMDD(ev.target.value);
+    app.rangeTo = t ? t + DAY : 0;
+    ev.target.value = t ? fmtYYMMDD(t) : '';
     rebuildVisible(false);
   });
 
